@@ -1,7 +1,7 @@
 /*
 
 Copyright (c)  2021 Ruslan Migirov <trapi78@gmail.com>
-Copyright (c)  2023 Franco Venturi
+Copyright (c)  2023-2025 Franco Venturi
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -219,7 +219,7 @@ int main(int argc, char **argv) {
 
         case 'x':
             xtal = strtoul(optarg, NULL, 10);
-            if (xtal < 1000000) {
+            if (xtal < 1000000 || xtal > 100000000) {
                 fprintf(stderr, "Invalid reference clock %d\n", xtal);
                 printhelp();
                 return 0;
@@ -502,6 +502,14 @@ static void start_adc(struct libusb_device_handle *dev_handle, unsigned int samp
         return;
     }
 
+    /* if the reference is above 40MHz, use a CLKIN divider */
+    unsigned int div_xtal = xtal;
+    uint8_t clkin_div = 0;
+    while (div_xtal > 40000000 && clkin_div <= 3) {
+        div_xtal /= 2;
+        clkin_div += 1;
+    }
+
     /* if the requested sample rate is below 1MHz, use an R divider */
     double r_samplerate = samplerate;
     uint8_t rdiv = 0;
@@ -524,7 +532,7 @@ static void start_adc(struct libusb_device_handle *dev_handle, unsigned int samp
     double vco_frequency = r_samplerate * output_ms;
 
     /* feedback MS */
-    double xtal_corrected = xtal * (1.0 + 1e-6 * correction);
+    double xtal_corrected = div_xtal * (1.0 + 1e-6 * correction);
     double feedback_ms = vco_frequency / xtal_corrected;
     /* find a good rational approximation for feedback_ms */
     uint32_t a;
@@ -532,7 +540,7 @@ static void start_adc(struct libusb_device_handle *dev_handle, unsigned int samp
     uint32_t c;
     rational_approximation(feedback_ms, SI5351_MAX_DENOMINATOR, &a, &b, &c);
 
-    fprintf(stderr, "actual PLL frequency: %d * (1.0 + %lg * 1e-6) * (%d + %d / %d)\n", xtal, correction, a, b, c);
+    fprintf(stderr, "actual PLL frequency: %d/%d * (1.0 + %lg * 1e-6) * (%d + %d / %d)\n", xtal, 1 << clkin_div, correction, a, b, c);
 
     double actual_ratio = a + (double)b / (double)c;
     double actual_pll_frequency = xtal_corrected * actual_ratio;
@@ -560,6 +568,13 @@ static void start_adc(struct libusb_device_handle *dev_handle, unsigned int samp
     };
 
     control_send(dev_handle, I2CWFX3, SI5351_ADDR, SI5351_REGISTER_MSNA_BASE, data_clkin, sizeof(data_clkin));
+
+    if (clkin_div > 0) {
+        uint8_t data_pll_source;
+        control_send(dev_handle, I2CRFX3, SI5351_ADDR, SI5351_REGISTER_PLL_SOURCE, &data_pll_source, sizeof(data_pll_source));
+        data_pll_source |= clkin_div << 6;
+        control_send(dev_handle, I2CWFX3, SI5351_ADDR, SI5351_REGISTER_PLL_SOURCE, &data_pll_source, sizeof(data_pll_source));
+    }
 
     /* configure clock output */
     /* since the output divider is an even integer a = output_ms, b = 0, c = 1 */
