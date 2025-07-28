@@ -62,6 +62,7 @@ int verbose;
 static int randomizer;
 static int dither;
 static int has_firmware;
+static bool fx3_reset = false;
 
 static void transfer_callback(struct libusb_transfer *transfer) {
     int size = 0;
@@ -139,6 +140,7 @@ static void printhelp(void) {
     fprintf(stderr,
             " --reqsize, -p      Packets per transfer request, default 8\n");
     fprintf(stderr, " --help, -h         Print this help\n");
+    fprintf(stderr, " --reset            Send reset command to FX3 firmware (go to DFU mode)\n");
 }
 int main(int argc, char **argv) {
 
@@ -148,7 +150,7 @@ int main(int argc, char **argv) {
     int c;
     while (1) {
         static struct option long_options[] = {
-            {"verbose", optional_argument, &verbose, 1},
+            {"verbose", optional_argument, &verbose, 'v'},
             {"firmware", required_argument, &has_firmware, 'f'},
             {"dither", no_argument, &dither, 'd'},
             {"rand", no_argument, &randomizer, 'r'},
@@ -159,12 +161,13 @@ int main(int argc, char **argv) {
             {"queuedepth", required_argument, 0, 'q'},
             {"reqsize", required_argument, 0, 'p'},
             {"help", no_argument, 0, 'h'},
+            {"reset", no_argument, 0, 1001},
             {0, 0, 0, 0}};
 
         int option_index = 0;
         int gainvalue = 0;
 
-        c = getopt_long(argc, argv, "f:drs:hm:g:a:q:p:", long_options,
+        c = getopt_long(argc, argv, "f:drs:hm:g:a:q:p:v:", long_options,
                         &option_index);
 
         if (c == -1)
@@ -252,6 +255,9 @@ int main(int argc, char **argv) {
                 printhelp();
                 return 0;
             }
+            break;
+        case 1001:
+            fx3_reset = true;
             break;
         case 'h':
         case '?':
@@ -411,6 +417,11 @@ has_firmware:
     }
     if (randomizer) {
         gpio |= RANDO;
+    }
+    if (fx3_reset) {
+        usleep(5000);
+        command_send(dev_handle, RESETFX3, 0);
+        goto end;
     }
 
     usleep(5000);
